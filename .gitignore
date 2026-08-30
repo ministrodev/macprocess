@@ -1,0 +1,37 @@
+# Xcode & macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon\r\r
+._*
+.Spotlight-V100
+.Trashes
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcuserdatad/
+DerivedData/
+.swiftpm/
+
+# Swift Package Manager Build Artefacts
+.build/
+Packages/
+
+# CMake & C++ Build Artefacts
+Backend/build/
+Backend/bin/
+Backend/lib/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# App Bundles & Disk Images (Instaladores gerados localmente)
+*.app
+*.dmg
+*-temp.dmg
+
+# Logs & Temporary Files
+*.log
+*.tmp
+scratch/
