@@ -4,11 +4,15 @@ import AppKit
 enum AppTab: String, CaseIterable {
     case processes = "Processos"
     case startup = "Inicialização & 2º Plano"
+    case updates = "Atualizações"
+    case uninstaller = "Desinstalador"
 }
 
 struct DashboardView: View {
     @StateObject private var store = ProcessStore()
     @StateObject private var startupStore = StartupStore()
+    @StateObject private var updatesStore = UpdatesStore()
+    @StateObject private var uninstallerStore = UninstallerStore()
     
     @State private var currentTab: AppTab = .processes
     @State private var search = ""
@@ -17,6 +21,12 @@ struct DashboardView: View {
     @State private var showAllInstalled = false
     @State private var selectedId: String?
     @State private var selectedStartupId: String?
+    @State private var confirmInstallUpdates = false
+    @State private var confirmAutomaticChecks = false
+    @State private var selectedUninstallApp: InstalledApplication?
+    @State private var selectedResidualIDs: Set<String> = []
+    @State private var selectedOrphanIDs: Set<String> = []
+    @State private var showOrphanedResiduals = false
 
     private var filtered: [ManagedProcess] {
         search.isEmpty ? store.processes : store.processes.filter { $0.name.localizedCaseInsensitiveContains(search) }
@@ -45,7 +55,7 @@ struct DashboardView: View {
     }
 
     private var activeNotice: ClosedNotice? {
-        store.closedNotice ?? startupStore.notice
+        store.closedNotice ?? startupStore.notice ?? updatesStore.notice ?? uninstallerStore.notice
     }
 
     var body: some View {
@@ -64,7 +74,7 @@ struct DashboardView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
-                } else {
+                } else if currentTab == .startup {
                     HStack(alignment: .top, spacing: 18) {
                         startupSidebar
                         VStack(alignment: .leading, spacing: 12) {
@@ -72,6 +82,10 @@ struct DashboardView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
+                } else if currentTab == .updates {
+                    updatesView
+                } else {
+                    uninstallerView
                 }
             }
             .padding(20)
@@ -152,6 +166,28 @@ struct DashboardView: View {
                 )
                 .zIndex(100)
             }
+
+            if updatesStore.isInstalling {
+                Color.black.opacity(0.42)
+                    .ignoresSafeArea()
+                    .zIndex(110)
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text("Baixando e instalando atualizações")
+                        .font(.headline.weight(.bold))
+                    Text("O macOS pode pedir sua senha de administrador. Mantenha este app aberto até a conclusão.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 270)
+                }
+                .padding(28)
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.primary.opacity(0.10), lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 25, y: 10)
+                .zIndex(111)
+            }
         }
         .frame(minWidth: 1040, minHeight: 680)
         .animation(.spring(response: 0.32, dampingFraction: 0.76), value: activeNotice != nil)
@@ -160,6 +196,12 @@ struct DashboardView: View {
         }
         .task {
             await startupStore.refresh()
+        }
+        .task {
+            await updatesStore.refresh()
+        }
+        .task {
+            await uninstallerStore.refresh()
         }
         .alert(
             "Ação indisponível",
@@ -172,12 +214,36 @@ struct DashboardView: View {
         } message: {
             Text(store.errorMessage ?? startupStore.errorMessage ?? "")
         }
+        .alert("Instalar atualizações?", isPresented: $confirmInstallUpdates) {
+            Button("Cancelar", role: .cancel) {}
+            Button("Baixar e instalar") {
+                Task { await updatesStore.installAllAvailable() }
+            }
+        } message: {
+            Text("O macOS solicitará uma senha de administrador. Algumas atualizações podem exigir reinicialização.")
+        }
+        .alert(
+            "Ativar buscas automáticas?",
+            isPresented: $confirmAutomaticChecks
+        ) {
+            Button("Cancelar", role: .cancel) {}
+            Button("Ativar") {
+                Task { await updatesStore.enableAutomaticChecks() }
+            }
+        } message: {
+            Text("O macOS solicitará sua senha de administrador para ativar buscas automáticas de atualizações.")
+        }
+        .sheet(isPresented: $showOrphanedResiduals) {
+            orphanedResidualsSheet
+        }
     }
 
     private func dismissModal() {
         withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
             store.closedNotice = nil
             startupStore.notice = nil
+            updatesStore.notice = nil
+            uninstallerStore.notice = nil
         }
     }
 
@@ -201,7 +267,7 @@ struct DashboardView: View {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                             )
-                        Image(systemName: currentTab == .processes ? "cpu" : "bolt.shield")
+                        Image(systemName: currentTab == .processes ? "cpu" : (currentTab == .startup ? "bolt.shield" : (currentTab == .updates ? "arrow.triangle.2.circlepath" : "trash")))
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(Color.accentColor)
                     }
@@ -210,7 +276,7 @@ struct DashboardView: View {
                     Text("MacProcess")
                         .font(.headline.bold())
                         .foregroundStyle(.primary)
-                    Text(currentTab == .processes ? "Gerenciador de Processos" : "Itens de Inicialização & Background")
+                    Text(currentTab == .processes ? "Gerenciador de Processos" : (currentTab == .startup ? "Itens de Inicialização & Background" : (currentTab == .updates ? "Atualizações do macOS e Apps" : "Remoção completa de aplicativos")))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -222,64 +288,16 @@ struct DashboardView: View {
             HStack(spacing: 4) {
                 tabButton(title: "Processos", icon: "cpu", tab: .processes)
                 tabButton(title: "Inicialização & 2º Plano", icon: "bolt.shield", tab: .startup)
+                tabButton(title: "Atualizações", icon: "arrow.triangle.2.circlepath", tab: .updates)
+                tabButton(title: "Desinstalador", icon: "trash", tab: .uninstaller)
             }
             .padding(4)
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
 
-            Spacer()
-
-            // Barra de busca
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                TextField(currentTab == .processes ? "Buscar processos..." : "Buscar inicialização...", text: $search)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                if !search.isEmpty {
-                    Button {
-                        search = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(width: 220)
-            .background(Color.primary.opacity(0.04), in: Capsule())
-            .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 1))
-
-            // Botão atualizar
-            Button {
-                Task {
-                    if currentTab == .processes {
-                        await store.refresh()
-                    } else {
-                        await startupStore.refresh()
-                    }
-                }
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 32, height: 32)
-
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(store.isLoading || startupStore.isLoading)
-            .help("Atualizar lista")
         }
     }
 
@@ -307,6 +325,446 @@ struct DashboardView: View {
             .foregroundStyle(isSelected ? Color.primary : Color.secondary)
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Atualizações (consulta e atalhos para os controles oficiais)
+    private var updatesView: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                updatesHero
+                updatesActions
+                automaticChecksCard
+                updatesList
+                updatesInfoCard
+                if let date = updatesStore.lastUpdated {
+                    Text("Última verificação: \(date.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(22)
+        }
+        .background(Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private var updatesHero: some View {
+        VStack(spacing: 14) {
+            updatesIcon
+            Text(updatesStore.statusMessage).font(.title3.weight(.bold))
+            Text("Consulte atualizações do macOS aqui e use os painéis oficiais para instalar atualizações de sistema e aplicativos.")
+                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 560)
+        }
+        .padding(.top, 18)
+    }
+
+    private var updatesIcon: some View {
+        ZStack {
+            Circle().fill(Color.accentColor.opacity(0.10)).frame(width: 160, height: 160)
+            Circle().stroke(Color.accentColor.opacity(0.30), lineWidth: 1.5).frame(width: 138, height: 138)
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                .font(.system(size: 70, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .rotationEffect(.degrees(updatesStore.isLoading ? 360 : 0))
+                .animation(.linear(duration: 0.8), value: updatesStore.isLoading)
+        }
+    }
+
+    private var updatesActions: some View {
+        VStack(spacing: 10) {
+            Button { Task { await updatesStore.refresh() } } label: {
+                Label(updatesStore.isLoading ? "Buscando…" : "Buscar atualizações", systemImage: "arrow.clockwise")
+                    .font(.system(size: 14, weight: .semibold)).padding(.horizontal, 22).padding(.vertical, 10)
+                    .foregroundStyle(.white).background(Color.accentColor, in: Capsule())
+            }
+            .buttonStyle(.plain).disabled(updatesStore.isLoading)
+            if !updatesStore.updates.isEmpty {
+                Button { confirmInstallUpdates = true } label: {
+                    Label("Baixar e instalar tudo", systemImage: "arrow.down.circle.fill")
+                        .font(.system(size: 14, weight: .semibold)).padding(.horizontal, 22).padding(.vertical, 10)
+                        .foregroundStyle(Color.accentColor).background(Color.accentColor.opacity(0.10), in: Capsule())
+                }
+                .buttonStyle(.plain).disabled(updatesStore.isInstalling)
+            }
+        }
+    }
+
+    private var updatesList: some View {
+        VStack(spacing: 0) {
+            if updatesStore.updates.isEmpty && !updatesStore.isLoading {
+                Text("Nenhuma atualização identificada nesta consulta.").font(.subheadline).foregroundStyle(.secondary).padding(30)
+            }
+            ForEach(updatesStore.updates) { update in
+                updateRow(update, install: { confirmInstallUpdates = true })
+                if update.id != updatesStore.updates.last?.id { Divider().overlay(Color.primary.opacity(0.08)) }
+            }
+        }
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        .frame(maxWidth: 680)
+    }
+
+    private var updatesInfoCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Atualizações são gerenciadas pelo macOS", systemImage: "info.circle").font(.subheadline.weight(.bold))
+            Text("Mantenha as buscas e atualizações automáticas ativas para receber correções de segurança. Para instalar, pausar ou definir a política de atualizações, use os controles oficiais do macOS.")
+                .font(.caption).foregroundStyle(.secondary).lineSpacing(2)
+            HStack(spacing: 16) {
+                Button("Abrir Atualização de Software") { openSystemUpdates() }.buttonStyle(.link).font(.caption.weight(.semibold))
+                Button("Abrir atualizações da App Store") { openAppStoreUpdates() }.buttonStyle(.link).font(.caption.weight(.semibold))
+            }
+            .padding(.top, 2)
+        }
+        .padding(16).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: 680, alignment: .leading)
+    }
+
+    private func openSystemUpdates() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func openAppStoreUpdates() {
+        guard let url = URL(string: "macappstore://showUpdatesPage") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - Desinstalador
+    private var uninstallerView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Desinstalador completo").font(.title3.weight(.bold))
+                    Text("Remova aplicativos e os dados associados de forma recuperável.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(uninstallerStore.applications.count) apps")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button {
+                    selectedOrphanIDs = []
+                    showOrphanedResiduals = true
+                } label: {
+                    Label("\(uninstallerStore.orphanedResiduals.count) resíduos", systemImage: "tray.full")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(Color.orange.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                uninstallerAppList
+                uninstallerDetailPanel
+            }
+            .frame(maxHeight: .infinity)
+
+        }
+        .padding(20)
+        .background(Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private var uninstallerAppList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("APLICATIVOS INSTALADOS").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+            Divider().overlay(Color.primary.opacity(0.08))
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(filteredUninstallApps) { app in
+                        Button { selectUninstallApp(app) } label: {
+                            HStack(spacing: 10) {
+                                Image(nsImage: app.icon).resizable().scaledToFit().frame(width: 28, height: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                    Text(app.bundleIdentifier).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Text(app.formattedSize).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .padding(9)
+                            .background(selectedUninstallApp?.id == app.id ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 300)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private var uninstallerDetailPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let app = selectedUninstallApp {
+                uninstallDetail(app)
+            } else {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "trash.circle").font(.system(size: 54)).foregroundStyle(Color.accentColor.opacity(0.7))
+                    Text("Selecione um aplicativo").font(.headline)
+                    Text("Vamos localizar caches, preferências e outros dados associados antes de remover.")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 340)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer()
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private func selectUninstallApp(_ app: InstalledApplication) {
+        selectedUninstallApp = app
+        selectedResidualIDs = []
+        Task {
+            await uninstallerStore.scanResiduals(for: app)
+            selectedResidualIDs = Set(uninstallerStore.residuals.map(\.id))
+        }
+    }
+
+    private var filteredUninstallApps: [InstalledApplication] {
+        guard !search.isEmpty else { return uninstallerStore.applications }
+        return uninstallerStore.applications.filter {
+            $0.name.localizedCaseInsensitiveContains(search) || $0.bundleIdentifier.localizedCaseInsensitiveContains(search)
+        }
+    }
+
+    private func uninstallDetail(_ app: InstalledApplication) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(nsImage: app.icon).resizable().scaledToFit().frame(width: 52, height: 52)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(app.name).font(.title3.weight(.bold))
+                    Text(app.url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                if !uninstallerStore.isScanning {
+                    Text(ByteCountFormatter.string(fromByteCount: uninstallerStore.selectedTotalSize, countStyle: .file))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+            }
+            Text("Dados associados encontrados").font(.subheadline.weight(.semibold))
+            if uninstallerStore.isScanning {
+                HStack { ProgressView(); Text("Verificando caches, dados e preferências…").foregroundStyle(.secondary) }
+            } else if uninstallerStore.residuals.isEmpty {
+                Text("Nenhum dado adicional identificado nos locais padrão do usuário.").font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(uninstallerStore.residuals) { residual in
+                            residualRow(residual)
+                            Divider().overlay(Color.primary.opacity(0.06))
+                        }
+                    }
+                }
+            }
+            Spacer()
+            Button("Enviar app e itens selecionados para a Lixeira") { uninstallSelectedApp() }
+                .buttonStyle(.borderedProminent)
+                .disabled(uninstallerStore.isScanning || uninstallerStore.isRemoving)
+            Text("Nada é apagado permanentemente: os itens são movidos para a Lixeira.").font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func residualRow(_ residual: AppResidual) -> some View {
+        Button { toggleResidual(residual) } label: {
+            HStack(alignment: .center, spacing: 10) {
+                selectionIcon(selectedResidualIDs.contains(residual.id))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(residual.category).font(.system(size: 13, weight: .medium))
+                    Text(residual.url.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text(residual.formattedSize).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .padding(.vertical, 9)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var orphanedResidualsSheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Resíduos de apps removidos").font(.title3.weight(.bold))
+                    Text("Apenas dados no diretório do usuário; itens internos do macOS são excluídos.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Atualizar") { Task { await uninstallerStore.refresh() } }.buttonStyle(.bordered)
+                Button("Fechar") { showOrphanedResiduals = false }.buttonStyle(.bordered)
+            }
+            if uninstallerStore.orphanedResiduals.isEmpty {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle").font(.system(size: 38)).foregroundStyle(.green)
+                    Text("Nenhum resíduo encontrado").font(.headline)
+                    Text("Não há dados identificáveis de apps removidos.").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(uninstallerStore.orphanedResiduals) { residual in
+                            orphanResidualRow(residual)
+                            Divider().overlay(Color.primary.opacity(0.07))
+                        }
+                    }
+                }
+                HStack {
+                    Button("Selecionar todos") { selectedOrphanIDs = Set(uninstallerStore.orphanedResiduals.map(\.id)) }.buttonStyle(.link)
+                    Spacer()
+                    Button("Mover selecionados para a Lixeira (\(selectedOrphanSizeText))") { removeSelectedOrphans() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(selectedOrphanIDs.isEmpty || uninstallerStore.isRemoving)
+                }
+            }
+        }
+        .padding(22)
+        .frame(width: 680, height: 540)
+    }
+
+    private var selectedOrphanSizeText: String {
+        let bytes = uninstallerStore.orphanedResiduals
+            .filter { selectedOrphanIDs.contains($0.id) }
+            .reduce(Int64(0)) { $0 + $1.size }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func orphanResidualRow(_ residual: AppResidual) -> some View {
+        Button { toggleOrphan(residual) } label: {
+            HStack(alignment: .center, spacing: 10) {
+                selectionIcon(selectedOrphanIDs.contains(residual.id))
+                Image(systemName: "archivebox").foregroundStyle(.orange).frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(residual.displayName).font(.system(size: 13, weight: .semibold))
+                    Text("Distribuidor provável: \(residual.probablePublisher) · \(residual.category)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(residual.url.path).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text(residual.formattedSize).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func selectionIcon(_ selected: Bool) -> some View {
+        Image(systemName: selected ? "checkmark.square.fill" : "square")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            .frame(width: 18)
+    }
+
+    private func toggleResidual(_ residual: AppResidual) {
+        if selectedResidualIDs.contains(residual.id) { selectedResidualIDs.remove(residual.id) }
+        else { selectedResidualIDs.insert(residual.id) }
+    }
+
+    private func toggleOrphan(_ residual: AppResidual) {
+        if selectedOrphanIDs.contains(residual.id) { selectedOrphanIDs.remove(residual.id) }
+        else { selectedOrphanIDs.insert(residual.id) }
+    }
+
+    private func uninstallSelectedApp() {
+        guard let app = selectedUninstallApp else { return }
+        let selected = uninstallerStore.residuals.filter { selectedResidualIDs.contains($0.id) }
+        Task {
+            let appRemoved = await uninstallerStore.moveToTrash(app: app, residuals: selected)
+            if appRemoved {
+                selectedUninstallApp = nil
+                selectedResidualIDs = []
+            }
+        }
+    }
+
+    private func removeSelectedOrphans() {
+        let selected = uninstallerStore.orphanedResiduals.filter { selectedOrphanIDs.contains($0.id) }
+        showOrphanedResiduals = false
+        selectedOrphanIDs = []
+        Task {
+            _ = await uninstallerStore.moveOrphansToTrash(selected)
+        }
+    }
+
+    private func updateRow(_ update: SystemUpdate, install: @escaping () -> Void) -> some View {
+        return HStack(spacing: 14) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 25))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(update.title).font(.system(size: 14, weight: .semibold))
+                Text(update.detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(action: install) {
+                Label("Instalar", systemImage: "arrow.down")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Baixar e instalar todas as atualizações disponíveis")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private var automaticChecksCard: some View {
+        let enabled = updatesStore.automaticChecksEnabled == true
+        let unknown = updatesStore.automaticChecksEnabled == nil
+        let automaticChecksBinding = Binding<Bool>(
+            get: { updatesStore.automaticChecksEnabled == true },
+            set: { wantsEnabled in
+                if wantsEnabled && !enabled {
+                    confirmAutomaticChecks = true
+                }
+            }
+        )
+        return HStack(spacing: 14) {
+            Image(systemName: enabled ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
+                .font(.system(size: 25))
+                .foregroundStyle(enabled ? Color.green : Color.orange)
+                .frame(width: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Buscas automáticas")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(unknown ? "Não foi possível confirmar esta configuração." : (enabled ? "O macOS busca atualizações automaticamente." : "As buscas automáticas estão desativadas."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: automaticChecksBinding)
+                .labelsHidden()
+                .toggleStyle(SwitchToggleStyle(tint: Color.green))
+                .disabled(unknown || updatesStore.isChangingAutomaticChecks)
+                .help(enabled ? "As buscas automáticas são mantidas ativas." : "Ativar buscas automáticas (requer senha de administrador)")
+        }
+        .padding(18)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        .frame(maxWidth: 680)
     }
 
     // MARK: - Sidebar de Processos

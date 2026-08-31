@@ -3,6 +3,7 @@
   <h1>MacProcess</h1>
   <p><strong>Gerenciador de Processos e Controle de Serviços em Segundo Plano para macOS</strong></p>
   <p>Software nativo de alta performance desenvolvido com SwiftUI e núcleo em C++17.</p>
+  <p><strong>Versão atual: 1.0.2</strong></p>
 
   <p>
     <a href="https://github.com/ministrodev/macprocess/releases/latest">
@@ -26,22 +27,55 @@ O **MacProcess** é uma solução para monitoramento de recursos, inspeção de 
 
 ## Interface do Aplicativo
 
+Na versão 1.0.2, a navegação do MacProcess é dividida em quatro abas próprias: **Processos**, **Inicialização & 2º Plano**, **Atualizações** e **Desinstalador**.
+
 <div align="center">
-  <h4>Monitoramento e Encerramento de Processos</h4>
-  <img src="docs/screenshots/dashboard.png" width="850" alt="Painel de Processos MacProcess" />
+  <h4>1. Processos</h4>
+  <img src="docs/screenshots/processos.png" width="850" alt="Aba Processos do MacProcess" />
 </div>
+
+Monitore CPU e memória, expanda grupos de subprocessos e encerre aplicativos quando necessário.
 
 <br />
 
 <div align="center">
-  <h4>Gerenciamento de Itens de Inicialização e LaunchDaemons</h4>
-  <img src="docs/screenshots/startup.png" width="850" alt="Gerenciador de Inicialização MacProcess" />
+  <h4>2. Inicialização &amp; 2º Plano</h4>
+  <img src="docs/screenshots/2plano.png" width="850" alt="Aba de Inicialização e Segundo Plano" />
 </div>
+
+Revise itens de inicialização, agentes de sistema e serviços em segundo plano. Os controles permitem alterar somente itens de terceiros identificados pelo app.
 
 <br />
 
 <div align="center">
-  <h4>Instalador de Distribuição</h4>
+  <h4>3. Atualizações</h4>
+  <img src="docs/screenshots/atualizacoes.png" width="850" alt="Aba Atualizações do MacProcess" />
+</div>
+
+Consulte atualizações do macOS, abra os painéis oficiais e inicie a instalação pelo mecanismo nativo do sistema.
+
+<br />
+
+<div align="center">
+  <h4>4. Desinstalador</h4>
+  <img src="docs/screenshots/desinstalador.png" width="850" alt="Aba Desinstalador do MacProcess" />
+</div>
+
+Os aplicativos são ordenados por tamanho. Selecione um deles para localizar o pacote, caches, preferências, dados de suporte e outros itens associados antes de enviá-los à Lixeira.
+
+<br />
+
+<div align="center">
+  <h4>5. Resíduos de aplicativos removidos</h4>
+  <img src="docs/screenshots/restigios-deinstalador.png" width="850" alt="Modal de resíduos do Desinstalador" />
+</div>
+
+Abra a tag de resíduos para revisar itens que não possuem aplicativo correspondente instalado. Selecione os itens desejados e veja o espaço total antes de movê-los para a Lixeira.
+
+<br />
+
+<div align="center">
+  <h4>Instalador de distribuição</h4>
   <img src="docs/screenshots/installer.png" width="620" alt="Instalador MacProcess" />
 </div>
 
@@ -62,6 +96,18 @@ O **MacProcess** é uma solução para monitoramento de recursos, inspeção de 
 ### Integridade do Sistema Operacional
 - Filtro de segurança integrado para proteção contra encerramento ou desativação acidental de serviços essenciais da Apple (`com.apple.*`).
 - Exibição de alertas de status com identificação visual dos aplicativos manipulados.
+
+### Atualizações do macOS
+- Consulta das atualizações disponíveis pelo mecanismo oficial do macOS.
+- Atalho direto para Atualização de Software e atualizações da App Store.
+- Instalação com confirmação e autenticação administrativa nativa quando necessária.
+- Status de buscas automáticas e opção para reativá-las com autorização do usuário.
+
+### Desinstalador Completo
+- Lista aplicativos de terceiros instalados, ordenados por tamanho.
+- Localiza dados associados em Application Support, Caches, Preferences, Logs, estado salvo e Containers.
+- Detecta resíduos identificáveis de aplicativos já removidos, apenas dentro da Biblioteca do usuário e excluindo componentes `com.apple.*`.
+- Move apps e dados selecionados para a Lixeira, com indicação do espaço recuperado e possibilidade de restauração antes de esvaziá-la.
 
 ---
 
